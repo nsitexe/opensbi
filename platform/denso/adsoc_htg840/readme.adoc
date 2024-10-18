@@ -1,0 +1,93 @@
+= OpenSBI for ADSoC on HTG-840 FPGA platform
+
+We currently support the following software / hardware configuration
+
+== HTG-840 peripherals supported
+
+=== No.of HARTs
+* 2
+
+=== UART
+* 8250 (16550)
+* UART 0 of ADSoC
+* clk freq: 25MHz
+* baud: 520800
+
+=== ACLINT
+* mswi
+* mtimer
+* ipi
+
+=== PLIC
+* sifive plic type
+
+=== Memory layout
+
+The following memory layout is fixed and it can be overridden using environment variables
+
+[cols="3,3,2,3,5", options="header"]
+|===
+| Region Name | Memory region start | Region size | Environment variable | Remarks
+| Device Tree Binary | 0x800F_0000 | 64 KB | FW_JUMP_FDT_ADDR | 
+| OpenSBI | 0x8010_0000 | 64 KB | FW_TEXT_START | To boot Linux, set PC to this address
+| Linux Kernel | 0x8020_0000 | 32 MB | FW_JUMP_ADDR | 
+| RootFS/Initrd | 0x8220_0000 | 128 MB | - | Set via DTS +
+chosen { +
+linux,initrd-start = <0x82200000>; +
+linux,initrd-end   = <0x8A200000>; +
+}
+|===
+
+=== Workarounds
+
+==== Srmnmi (mnstatus)
+Initializes `mnsatus` register
+```c
+static int adsoc_nascent_init(void)
+{
+    csr_write(CSR_MNSTATUS, 0x8);
+
+    return 0;
+}
+```
+
+==== PMP configuration
+Overrides the default PMP configuration
+```c
+static int adsoc_domains_init(void) {
+    int rc;
+    struct sbi_domain_memregion reg, *preg;
+
+    // override the default PMP configuration
+    sbi_domain_for_each_memregion(&root, preg) {
+        if((preg->base == 0) && (preg->order == __riscv_xlen)) {
+            sbi_domain_memregion_init(
+                0x80000000UL,
+                0xFFFFFFFFUL-0x80000000UL,
+                (SBI_DOMAIN_MEMREGION_SU_RWX), preg);
+            break;
+        }
+    }
+
+    // Add a new memory region
+    sbi_domain_memregion_init(
+        0x0000000100000000ULL, 
+        0xFFFFFFFFFFFFFFFFULL-0x0000000100000000ULL,
+        (SBI_DOMAIN_MEMREGION_ENF_PERMISSIONS), &reg);
+    rc = sbi_domain_root_add_memregion(&reg);
+    if (rc)
+        return rc;
+
+    return 0;
+}
+```
+
+=== Building OpenSBI
+
+`make CROSS_COMPILE=riscv64-linux-gnu- PLATFORM=denso/adsoc_htg840`
+
+==== For example to override DTB address
+`make CROSS_COMPILE=riscv64-linux-gnu- PLATFORM=denso/adsoc_htg840 FW_JUMP_FDT_ADDR=0x800E0000`
+
+==== To override No. of HARTs
+`make CROSS_COMPILE=riscv64-linux-gnu- PLATFORM=denso/adsoc_htg840 FW_HART_COUNT=1`
